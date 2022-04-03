@@ -9,15 +9,36 @@
 #include <libavutil/opt.h>
 #include <libavutil/avstring.h>
 #include <libavutil/mem.h>
+#include <python3.8/Python.h>
 
-static int OpenFile(char *file, AVFormatContext ** ffmt,
+//// Read A File Like Object
+static
+int pyy_read(PyObject * ob, char *buf, int sz)
+{
+    PyObject *args = PyTuple_New(1);
+    PyTuple_SetItem(args, 0, PyLong_FromSize_t(sz));
+
+    PyObject *ans = PyObject_Call(ob, args, 0);
+
+    Py_DECREF(args);
+
+    return sz;
+}
+
+static int OpenFile(PyObject * file, AVFormatContext ** ffmt,
 		    AVCodecContext ** ddc, int *stream_indexx)
 {
     AVFormatContext *fmtctx = 0;
     int ret = 0;
     AVCodecContext *dctx = 0;
 
-    ret = avformat_open_input(&fmtctx, file, 0, 0);
+    fmtctx = avformat_alloc_context();
+
+    fmtctx->pb = avio_alloc_context(av_malloc(1054), 1054,
+				    AVIO_FLAG_READ, file, pyy_read, NULL,
+				    NULL);
+
+    ret = avformat_open_input(&fmtctx, "<PyObject>", 0, 0);
     if (ret < 0)
 	return 0;
     do {
@@ -203,6 +224,58 @@ static
 int std_write(void *dta, uint8_t * buf, int sz)
 {
     return fwrite(buf, sz, 1, dta);
+}
+
+static void avpy_close_fmt(PyObject * ob)
+{
+    avformat_free_context(PyCapsule_GetPointer(ob, "_.fmt"));
+}
+
+static void avpy_close_cdc(PyObject * ob)
+{
+    avformat_free_context(PyCapsule_GetPointer(ob, "_.cbc"));
+}
+
+static PyObject *avpy_open(s, a)
+PyObject *s, *a;
+{
+    do {
+	PyObject *obj = 0;
+	if (!PyArg_ParseTuple(a, "O", &obj))
+	    break;
+	if (PyObject_HasAttrString(obj, "read") == 0)
+	    break;
+	PyObject *rdr = PyObject_GetAttrString(obj, "read");
+	if (PyCallable_Check(rdr) == 0) {
+	    PyErr_Format(PyExc_RuntimeError,
+			 "The Input argument must possess .read function");
+	    break;
+	}
+	/*
+	   static int OpenFile(PyObject * file, AVFormatContext ** ffmt,
+	   AVCodecContext ** ddc, int *stream_indexx)
+	 */
+	AVFormatContext *fmt = 0;
+	AVCodecContext *codec = 0;
+	int stream_index = 0;
+
+	if (OpenFile(rdr, &fmt, &codec, stream_index) < 0) {
+	    if (fmt) {
+		avformat_free_context(fmt);
+	    }
+	    PyErr_Format(PyExc_RuntimeError, "Failed To open Media file");
+	    break;
+	}
+
+	PyObject *ans = PyList_New(0);
+	PyList_Append(ans, PyCapsule_New("_.fmt", fmt, avpy_close_fmt));
+	PyList_Append(ans, PyCapsule_New("_.cdc", codec, avpy_close_cdc));
+	PyList_Append(ans, PyLong_FromSize_t(stream_index));
+
+	return ans;
+
+    } while (0);
+    return NULL;
 }
 
 int main(argsc, args, env)
