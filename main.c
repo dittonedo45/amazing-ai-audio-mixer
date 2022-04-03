@@ -19,8 +19,13 @@ int pyy_read(PyObject * ob, char *buf, int sz)
     PyTuple_SetItem(args, 0, PyLong_FromSize_t(sz));
 
     PyObject *ans = PyObject_Call(ob, args, 0);
-
+    {
+	char *buff = 0;
+	PyBytes_AsStringAndSize(ans, &buff, &sz);
+	memcpy(buf, buff, sz);
+    }
     Py_DECREF(args);
+    Py_DECREF(ans);
 
     return sz;
 }
@@ -57,8 +62,8 @@ static int OpenFile(PyObject * file, AVFormatContext ** ffmt,
 	if (!dctx)
 	    break;
 	avcodec_parameters_to_context(dctx,
-				      fmtctx->
-				      streams[stream_index]->codecpar);
+				      fmtctx->streams[stream_index]->
+				      codecpar);
 	ret = avcodec_open2(dctx, dec, 0);
 	do {
 	    if (ret < 0)
@@ -223,7 +228,8 @@ AVFilterGraph **ffg;
 static
 int std_write(void *dta, uint8_t * buf, int sz)
 {
-    return fwrite(buf, sz, 1, dta);
+    PyObject_Call(dta, PyBytes_FromStringAndSize(buf, sz));
+    return sz;
 }
 
 static void avpy_close_fmt(PyObject * ob)
@@ -272,10 +278,72 @@ PyObject *s, *a;
 	PyList_Append(ans, PyCapsule_New("_.cdc", codec, avpy_close_cdc));
 	PyList_Append(ans, PyLong_FromSize_t(stream_index));
 
+	Py_INCREF(ans);
 	return ans;
 
     } while (0);
     return NULL;
+}
+
+static PyObject *pyav_open_write(s, a)
+PyObject *s, *a;
+{
+
+    do {
+	int ret = 0;
+	PyObject *file = 0;
+	char *format = 0;
+
+	ret = PyArg_ParseTuple(a, "Os", &file, &format);
+	if (!ret)
+	    break;
+	if (PyObject_HasAttrString(file, "write") == 0)
+	    break;
+	PyObject *rdr = PyObject_GetAttrString(obj, "write");
+	if (PyCallable_Check(rdr) == 0) {
+	    PyErr_Format(PyExc_RuntimeError,
+			 "The Input argument must possess .write function");
+	    break;
+	}
+	AVFormatContext *ofmt = 0;
+	AVCodecContext *enctx = 0;
+	do {
+	    ret = avformat_alloc_output_context2(&ofmt, 0, "sox", 0);
+	    if (ret < 0)
+		break;
+
+	    ofmt->pb =
+		avio_alloc_context(av_malloc(1054), 1054, 1, rdr, 0,
+				   std_write, 0);
+	    AVCodec *enc =
+		avcodec_find_encoder(ofmt->oformat->audio_codec);
+
+	    enctx = avcodec_alloc_context3(enc);
+	    enctx->sample_rate = 44100;
+	    enctx->sample_fmt = enc->sample_fmts[0];
+	    enctx->channel_layout = AV_CH_LAYOUT_STEREO;
+	    enctx->channels = 2;
+
+	    ret = avcodec_open2(enctx, enc, 0);
+	    if (ret < 0)
+		break;
+	    AVStream *fstream = avformat_new_stream(ofmt, enc);
+	    avcodec_parameters_from_context(fstream->codecpar, enctx);
+	} while (0);
+	if (ret < 0) {
+	    PyErr_Format(PyExc_RuntimeError, "Media Error, %s\n",
+			 av_err2str(ret));
+	    return 0;
+	}
+
+	PyObject *ans = PyList_New(0);
+	PyList_Append(ans, PyCapsule_New("_.fmt", ofmt, avpy_close_fmt));
+	PyList_Append(ans, PyCapsule_New("_.cdc", enctx, avpy_close_cdc));
+
+	Py_INCREF(ans);
+	return ans;
+    } while (0);
+    return 0;
 }
 
 int main(argsc, args, env)
@@ -283,7 +351,7 @@ int argsc;
 char **args, **env;
 {
     AVCodecContext *decoder = 0;
-    AVFormatContext *fmt = 0, *ofmt = 0;
+    AVFormatContext *fmt = 0;
 
     AVFilterContext *src, *sink;
     AVFilterGraph *fg = 0;
@@ -294,26 +362,6 @@ char **args, **env;
     if (ret < 0)
 	return 1;
     do {
-	ret = avformat_alloc_output_context2(&ofmt, 0, "sox", 0);
-	if (ret < 0)
-	    break;
-
-	ofmt->pb =
-	    avio_alloc_context(av_malloc(1054), 1054, 1, stdout, 0,
-			       std_write, 0);
-	AVCodec *enc = avcodec_find_encoder(ofmt->oformat->audio_codec);
-
-	AVCodecContext *enctx = avcodec_alloc_context3(enc);
-	enctx->sample_rate = 44100;
-	enctx->sample_fmt = enc->sample_fmts[0];
-	enctx->channel_layout = AV_CH_LAYOUT_STEREO;
-	enctx->channels = 2;
-
-	ret = avcodec_open2(enctx, enc, 0);
-	if (ret < 0)
-	    break;
-	AVStream *fstream = avformat_new_stream(ofmt, enc);
-	avcodec_parameters_from_context(fstream->codecpar, enctx);
 
 	OpenFilterGraph(decoder, enctx, &fg, &src, &sink);
 #if 0
