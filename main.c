@@ -54,7 +54,8 @@ static int OpenFile(char *file, AVFormatContext ** ffmt,
 static
 int Process(AVFormatContext * fmtctx, AVCodecContext * dctx,
 	    int stream_index, AVFilterGraph * fg, AVFilterContext * src,
-	    AVFilterContext * sink, AVCodecContext * enc)
+	    AVFilterContext * sink, AVCodecContext * enc,
+	    AVFormatContext * ofmt)
 {
     int ret;
     do {
@@ -89,8 +90,7 @@ int Process(AVFormatContext * fmtctx, AVCodecContext * dctx,
 				ret = avcodec_receive_packet(enc, pkt);
 				if (ret < 0)
 				    break;
-				fwrite(pkt->data, pkt->size, 1, stdout),
-				    fflush(stdout);
+				av_interleaved_write_frame(ofmt, pkt);
 			    } while (0);
 			    av_packet_free(&pkt);
 			}
@@ -185,33 +185,56 @@ AVFilterGraph **ffg;
     return err;
 }
 
+static
+int std_write(void *dta, uint8_t * buf, int sz)
+{
+    return fwrite(buf, sz, 1, dta);
+}
+
 int main(argsc, args, env)
 int argsc;
 char **args, **env;
 {
     AVCodecContext *decoder = 0;
-    AVFormatContext *fmt = 0;
+    AVFormatContext *fmt = 0, *ofmt = 0;
+
     AVFilterContext *src, *sink;
     AVFilterGraph *fg = 0;
-
     int stream_index = 0;
+
 
     int ret = OpenFile(args[1], &fmt, &decoder, &stream_index);
     if (ret < 0)
 	return 1;
+    do {
+	ret = avformat_alloc_output_context2(&ofmt, 0, "sox", 0);
+	if (ret < 0)
+	    break;
 
-    AVCodec *enc = avcodec_find_encoder_by_name("libmp3lame");
-    AVCodecContext *enctx = avcodec_alloc_context3(enc);
-    enctx->sample_rate = 44100;
-    enctx->sample_fmt = enc->sample_fmts[0];
-    enctx->channel_layout = AV_CH_LAYOUT_STEREO;
-    enctx->channels = 2;
+	ofmt->pb =
+	    avio_alloc_context(av_malloc(1054), 1054, 1, stdout, 0,
+			       std_write, 0);
+	AVCodec *enc = avcodec_find_encoder(ofmt->oformat->audio_codec);
 
-    avcodec_open2(enctx, enc, 0);
+	AVCodecContext *enctx = avcodec_alloc_context3(enc);
+	enctx->sample_rate = 44100;
+	enctx->sample_fmt = enc->sample_fmts[0];
+	enctx->channel_layout = AV_CH_LAYOUT_STEREO;
+	enctx->channels = 2;
 
-    OpenFilterGraph(decoder, enctx, &fg, &src, &sink);
+	ret = avcodec_open2(enctx, enc, 0);
+	if (ret < 0)
+	    break;
+	AVStream *fstream = avformat_new_stream(ofmt, enc);
+	avcodec_parameters_from_context(fstream->codecpar, enctx);
+
+	OpenFilterGraph(decoder, enctx, &fg, &src, &sink);
 #if 0
 #endif
-    Process(fmt, decoder, stream_index, fg, src, sink, enctx);
+	ret = avformat_write_header(ofmt, 0);
+	if (ret < 0)
+	    break;
+	Process(fmt, decoder, stream_index, fg, src, sink, enctx, ofmt);
+    } while (0);
     CloseFile(&fmt, &decoder);
 }
