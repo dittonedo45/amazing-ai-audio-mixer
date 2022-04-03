@@ -7,6 +7,8 @@
 #include <libavfilter/buffersrc.h>
 #include <libavfilter/buffersink.h>
 #include <libavutil/opt.h>
+#include <libavutil/avstring.h>
+#include <libavutil/mem.h>
 
 static int OpenFile(char *file, AVFormatContext ** ffmt,
 		    AVCodecContext ** ddc, int *stream_indexx)
@@ -34,8 +36,8 @@ static int OpenFile(char *file, AVFormatContext ** ffmt,
 	if (!dctx)
 	    break;
 	avcodec_parameters_to_context(dctx,
-				      fmtctx->streams[stream_index]->
-				      codecpar);
+				      fmtctx->
+				      streams[stream_index]->codecpar);
 	ret = avcodec_open2(dctx, dec, 0);
 	do {
 	    if (ret < 0)
@@ -117,7 +119,8 @@ AVFilterGraph **ffg;
 {
     int err;
     AVFilterGraph *fg = avfilter_graph_alloc();
-    AVFilterContext *abuffer_ctx = 0, *aformat_ctx = 0, *abuffersink_ctx;
+    AVFilterContext *abuffer_ctx = 0, *aformat_ctx =
+	0, *abuffersink_ctx, *speed_ctx;
     do {
 	abuffer_ctx =
 	    avfilter_graph_alloc_filter(fg,
@@ -142,6 +145,19 @@ AVFilterGraph **ffg;
 	if (err < 0)
 	    break;
 
+	{
+	    speed_ctx =
+		avfilter_graph_alloc_filter(fg,
+					    avfilter_get_by_name
+					    ("asetrate"), "speed");
+	    char *ans = av_asprintf("%.g", encoder->sample_rate * 1.4);
+	    err = avfilter_init_str(speed_ctx, ans);
+	    av_free(ans);
+	    if (err < 0)
+		break;
+
+	}
+
 	aformat_ctx =
 	    avfilter_graph_alloc_filter(fg,
 					avfilter_get_by_name("aformat"),
@@ -163,12 +179,10 @@ AVFilterGraph **ffg;
 					avfilter_get_by_name
 					("abuffersink"), "sink");
 
-	/* This filter takes no options. */
 	err = avfilter_init_str(abuffersink_ctx, NULL);
 
-	/* Connect the filters;
-	 * in this simple case the filters just form a linear chain. */
-	err = avfilter_link(abuffer_ctx, 0, aformat_ctx, 0);
+	avfilter_link(abuffer_ctx, 0, speed_ctx, 0);
+	avfilter_link(speed_ctx, 0, aformat_ctx, 0);
 	err = avfilter_link(aformat_ctx, 0, abuffersink_ctx, 0);
 
 	/* Configure the graph. */
@@ -234,6 +248,7 @@ char **args, **env;
 	ret = avformat_write_header(ofmt, 0);
 	if (ret < 0)
 	    break;
+
 	Process(fmt, decoder, stream_index, fg, src, sink, enctx, ofmt);
     } while (0);
     CloseFile(&fmt, &decoder);
