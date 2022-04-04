@@ -68,8 +68,8 @@ static int OpenFile(PyObject * file, AVFormatContext ** ffmt,
 	if (!dctx)
 	    break;
 	avcodec_parameters_to_context(dctx,
-				      fmtctx->
-				      streams[stream_index]->codecpar);
+				      fmtctx->streams[stream_index]->
+				      codecpar);
 	ret = avcodec_open2(dctx, dec, 0);
 	do {
 	    if (ret < 0)
@@ -119,12 +119,14 @@ int Process(AVFormatContext * fmtctx, AVCodecContext * dctx,
 				PyLong_FromUnsignedLongLong
 				(AV_TIME_BASE_Q.den));
 
-		PyObject_Call(cb_func, args, 0);
+		PyObject *res = PyObject_Call(cb_func, args, 0);
 		Py_DECREF(args);
-		if (PyErr_Occurred()) {
-		    PyErr_Clear();
+		if (res == Py_None || PyErr_Occurred()) {
+		    if (PyErr_Occurred())
+			PyErr_Clear();
 		    break;
 		}
+		Py_DECREF(res);
 	    }
 
 	    ret = avcodec_send_packet(dctx, &pkt);
