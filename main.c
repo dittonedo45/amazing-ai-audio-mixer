@@ -68,8 +68,8 @@ static int OpenFile(PyObject * file, AVFormatContext ** ffmt,
 	if (!dctx)
 	    break;
 	avcodec_parameters_to_context(dctx,
-				      fmtctx->streams[stream_index]->
-				      codecpar);
+				      fmtctx->
+				      streams[stream_index]->codecpar);
 	ret = avcodec_open2(dctx, dec, 0);
 	do {
 	    if (ret < 0)
@@ -445,33 +445,7 @@ PyModuleDef aaai_mod = {
     0, 0, 0, 0
 };
 
-PyObject *PyInit_aaai()
+PyMODINIT_FUNC PyInit_aaai()
 {
     return PyModule_Create(&aaai_mod);
-}
-
-int main(argsc, args, env)
-int argsc;
-char **args, **env;
-{
-    AVCodecContext *decoder = 0;
-    AVFormatContext *fmt = 0;
-
-    AVFilterContext *src, *sink;
-    AVFilterGraph *fg = 0;
-    int stream_index = 0;
-
-    PyImport_AppendInittab("aaai", &PyInit_aaai);
-    Py_Initialize();
-    {
-	FILE *Fp = fopen(args[1], "r");
-	if (Fp) {
-	    PyRun_AnyFile(Fp, args[1]);
-	    fclose(Fp);
-	}
-    }
-
-    Py_Finalize();
-
-    return 0;
 }
