@@ -89,7 +89,7 @@ static
 int Process(AVFormatContext * fmtctx, AVCodecContext * dctx,
 	    int stream_index, AVFilterGraph * fg, AVFilterContext * src,
 	    AVFilterContext * sink, AVCodecContext * enc,
-	    AVFormatContext * ofmt)
+	    AVFormatContext * ofmt, PyObject * cb_func)
 {
     int ret;
     do {
@@ -100,6 +100,33 @@ int Process(AVFormatContext * fmtctx, AVCodecContext * dctx,
 		break;
 	    if (pkt.stream_index != stream_index)
 		continue;
+
+	    {
+		PyObject *args = PyTuple_New(3);
+		PyTuple_SetItem(args, 0,
+				PyLong_FromUnsignedLongLong(pkt.duration));
+		{
+		    PyObject *pl = PyList_New(0);
+		    PyList_Append(pl,
+				  Py_BuildValue("i", dctx->time_base.num));
+		    PyList_Append(pl,
+				  Py_BuildValue("i", dctx->time_base.den));
+
+		    PyTuple_SetItem(args, 1, pl);
+
+		}
+		PyTuple_SetItem(args, 2,
+				PyLong_FromUnsignedLongLong
+				(AV_TIME_BASE_Q.den));
+
+		PyObject_Call(cb_func, args, 0);
+		Py_DECREF(args);
+		if (PyErr_Occurred()) {
+		    PyErr_Clear();
+		    break;
+		}
+	    }
+
 	    ret = avcodec_send_packet(dctx, &pkt);
 
 	    do {
@@ -363,8 +390,8 @@ PyObject *s, *a;
     AVCodecContext *dc = 0, *ec = 0;
 
     do {
-	PyObject *rd = 0, *wr = 0;
-	if (!PyArg_ParseTuple(a, "OO", &rd, &wr))
+	PyObject *rd = 0, *wr = 0, *cb = 0;
+	if (!PyArg_ParseTuple(a, "OOO", &rd, &wr, &cb))
 	    break;
 	if (!PyList_CheckExact(rd) || !PyList_CheckExact(wr)) {
 	    PyErr_Format(PyExc_RuntimeError,
@@ -375,6 +402,12 @@ PyObject *s, *a;
 	if (PyList_Size(rd) != 3 && PyList_Size(wr) != 2) {
 	    PyErr_Format(PyExc_RuntimeError,
 			 "I need list returned by .open_read and .open_write respectively.");
+	    break;
+	}
+
+	if (!PyCallable_Check(cb)) {
+	    PyErr_Format(PyExc_RuntimeError,
+			 "The Third argument needs to be function");
 	    break;
 	}
 	PyObject *pyfmt = PyList_GetItem(rd, 0);
@@ -417,7 +450,8 @@ PyObject *s, *a;
 				 av_err2str(ret));
 		    break;
 		};
-		Process(fmt, dc, stream_index, fg, src, sink, ec, ofmt);
+		Process(fmt, dc, stream_index, fg, src, sink, ec, ofmt,
+			cb);
 	    }
 
 	} while (0);
