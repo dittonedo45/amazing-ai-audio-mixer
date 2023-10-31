@@ -22,7 +22,7 @@ def duration_displayer(duration, div, time_base_q):
     per_file_duration = per_file_duration + duration
     if (per_file_duration/time_base_q)>56.60:
         return None
-    sys.stderr.write("{}\n".format (per_file_duration/time_base_q));
+    sys.stderr.write(f"{per_file_duration / time_base_q}\n");
     return True
 
 try:
@@ -39,14 +39,13 @@ for i in os.listdir('.'):
 
 while True:
     try:
-        inp = open (tracks[random.randint(0, len(tracks))], "rb")
-        try:
-            inp_handler = ai.open_read (inp)
-            ai.process( inp_handler, ai.open_write (sys.stdout, "sox"), duration_displayer)
-            per_file_duration = 0;
-        except Exception:
-            None
-        inp.close ();
+        with open (tracks[random.randint(0, len(tracks))], "rb") as inp:
+            try:
+                inp_handler = ai.open_read (inp)
+                ai.process( inp_handler, ai.open_write (sys.stdout, "sox"), duration_displayer)
+                per_file_duration = 0;
+            except Exception:
+                None
     except (IndexError,FileNotFoundError):
         print("Am tried, Let me die, in peace");
         sys.exit (0)
